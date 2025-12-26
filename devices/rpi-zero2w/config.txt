@@ -1,0 +1,19 @@
+[all]
+
+# Boot in 64-bit mode
+arm_64bit=1
+
+# U-Boot binary to load
+kernel=u-boot-rpi-arm64.bin
+
+# Enable serial console
+enable_uart=1
+
+# Enable USB OTG (required for USB gadget ethernet)
+dtoverlay=dwc2
+
+# Disable overscan
+disable_overscan=1
+
+# Avoid warnings on screen (no display attached)
+avoid_warnings=1
