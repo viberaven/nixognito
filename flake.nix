@@ -1,73 +1,60 @@
 {
-  description = "Nixognito - NixOS-based privacy-focused Tor router for Radxa Zero 3W";
+  description = "Nixognito - NixOS-based privacy-focused Tor router for single board computers";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
   };
 
   outputs = { self, nixpkgs, ... }:
   let
     gitRev = self.shortRev or self.dirtyShortRev or "unknown";
-    mkNixognitoSystem = { buildPlatform ? "aarch64-linux" }:
+
+    mkNixognitoSystem = { device, buildPlatform ? "aarch64-linux" }:
       nixpkgs.lib.nixosSystem {
         system = "aarch64-linux";
         modules = [
           "${nixpkgs}/nixos/modules/installer/sd-card/sd-image.nix"
           ./configuration.nix
-          ./hardware-configuration.nix
-          ./networking.nix
-          ./tor-proxy.nix
-          ./usb-ssh.nix
-          ./security-hardening.nix
+          ./devices/${device}
 
           ({ config, lib, pkgs, ... }: {
             nixpkgs.hostPlatform = "aarch64-linux";
-          } // lib.optionalAttrs (buildPlatform == "x86_64-linux") {
-            nixpkgs.buildPlatform = "x86_64-linux";
-          })
 
-          ({ config, lib, pkgs, ... }:
-          let
-            uboot = pkgs.ubootRadxaZero3W;
-          in {
-            boot.loader.grub.enable = false;
-            boot.loader.generic-extlinux-compatible.enable = true;
-
-            image.baseName = "nixognito-radxa-zero3w-${gitRev}";
-
-            sdImage = {
-              compressImage = false;
-
-              # Rockchip u-boot goes at sector 64 (32KB) and can be up to ~4MB
-              # Start firmware partition after u-boot area (at 16MB to be safe)
-              firmwarePartitionOffset = 32;  # In MiB, start at 32MiB
-              firmwareSize = 32;  # 32 MiB firmware partition
-              populateFirmwareCommands = "";
-
-              postBuildCommands = ''
-                # Write u-boot at sector 64 (32KB offset) as required by Rockchip
-                dd if=${uboot}/u-boot-rockchip.bin of=$img seek=64 conv=notrunc bs=512
-              '';
-
-              populateRootCommands = ''
-                mkdir -p ./files/boot/extlinux
-                ${config.boot.loader.generic-extlinux-compatible.populateCmd} -c ${config.system.build.toplevel} -d ./files/boot
-              '';
-            };
+            image.baseName = lib.mkForce
+              "nixognito-${device}-${gitRev}";
 
             fileSystems."/" = lib.mkForce {
               device = "/dev/disk/by-label/NIXOS_SD";
               fsType = "ext4";
             };
+          } // lib.optionalAttrs (buildPlatform == "x86_64-linux") {
+            nixpkgs.buildPlatform = "x86_64-linux";
           })
         ];
       };
+
+    devices = [ "radxa-zero3w" "rpi-zero2w" ];
+
   in {
-    nixosConfigurations.nixognito = mkNixognitoSystem {};
+    # NixOS configurations for each device
+    nixosConfigurations = builtins.listToAttrs (map (device: {
+      name = "nixognito-${device}";
+      value = mkNixognitoSystem { inherit device; };
+    }) devices);
 
-    packages.aarch64-linux.sdImage = self.nixosConfigurations.nixognito.config.system.build.sdImage;
+    # SD image packages for each device and build platform
+    packages.aarch64-linux = builtins.listToAttrs (map (device: {
+      name = "sdImage-${device}";
+      value = (mkNixognitoSystem { inherit device; }).config.system.build.sdImage;
+    }) devices);
 
-    packages.x86_64-linux.sdImage = (mkNixognitoSystem { buildPlatform = "x86_64-linux"; }).config.system.build.sdImage;
+    packages.x86_64-linux = builtins.listToAttrs (map (device: {
+      name = "sdImage-${device}";
+      value = (mkNixognitoSystem {
+        inherit device;
+        buildPlatform = "x86_64-linux";
+      }).config.system.build.sdImage;
+    }) devices);
 
     devShells = nixpkgs.lib.genAttrs [ "x86_64-linux" "aarch64-linux" ] (system:
       let
@@ -86,7 +73,10 @@
           shellHook = ''
             echo "Nixognito Development Environment"
             echo "Platform: ${system}"
-            echo "Build SD image: nix build .#sdImage"
+            echo ""
+            echo "Build SD images:"
+            echo "  nix build .#sdImage-radxa-zero3w"
+            echo "  nix build .#sdImage-rpi-zero2w"
           '';
         };
       });

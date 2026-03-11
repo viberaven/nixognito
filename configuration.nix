@@ -2,12 +2,10 @@
 
 {
   imports = [
-    ./hardware-configuration.nix
     ./networking.nix
     ./tor-proxy.nix
     ./usb-ssh.nix
     ./security-hardening.nix
-    ./aic8800.nix
   ];
 
   nixpkgs.hostPlatform = "aarch64-linux";
@@ -20,27 +18,6 @@
 
     # Use LTS kernel instead of latest (smaller, more stable)
     kernelPackages = pkgs.linuxPackages;
-
-    initrd = {
-      availableKernelModules = [
-        "mmc_block"
-        "sdhci_of_dwcmshc"
-        "phy_rockchip_inno_usb2"
-        "dwc3_of_simple"
-        "ohci_platform"
-        "ehci_platform"
-      ];
-    };
-
-    kernelModules = [
-      "rk_crypto"
-    ];
-
-    kernelParams = [
-      "console=ttyS2,1500000"
-      "earlycon=uart8250,mmio32,0xfe660000"
-      "earlyprintk"
-    ];
   };
 
   fileSystems."/" = {
@@ -103,24 +80,7 @@
     vim
   ];
 
-  hardware = {
-    enableRedistributableFirmware = lib.mkForce false;
-    firmware = with pkgs; [
-      wireless-regdb
-    ];
-  };
-
   powerManagement.cpuFreqGovernor = "ondemand";
-
-  systemd.services.disable-led = {
-    description = "Disable green LED";
-    wantedBy = [ "multi-user.target" ];
-    serviceConfig = {
-      Type = "oneshot";
-      RemainAfterExit = true;
-      ExecStart = "${pkgs.bash}/bin/bash -c 'echo none > /sys/class/leds/green:heartbeat/trigger'";
-    };
-  };
 
   nix = {
     settings = {

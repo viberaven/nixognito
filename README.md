@@ -2,6 +2,13 @@
 
 A hardened NixOS configuration for single board computers that routes all traffic through Tor with SSH access over USB ethernet.
 
+## Supported Devices
+
+| Device | WiFi Chip | WiFi Driver | USB Mode |
+|--------|-----------|-------------|----------|
+| **Radxa Zero 3W** | AIC8800 (SDIO) | aic8800_fdrv (out-of-tree) | dwc3 |
+| **Raspberry Pi Zero 2W** | BCM43439 (on-board) | brcmfmac (mainline) | dwc2 |
+
 ## Features
 
 - **SSH over USB Ethernet**: Access the system through USB ethernet gadget
@@ -10,6 +17,7 @@ A hardened NixOS configuration for single board computers that routes all traffi
 - **Network Isolation**: Direct internet connections blocked by iptables rules
 - **Security Hardening**: IPv6 disabled, DNS leak protection, traffic monitoring
 - **Cross-platform Build**: Supports building on x86_64 and aarch64 systems
+- **Multi-device Support**: Single codebase for multiple SBC targets
 
 ## Quick Start
 
@@ -51,31 +59,45 @@ Then follow the Linux build instructions below.
 git clone <this-repo>
 cd nixognito
 
-# Build the SD card image
-nix build .#sdImage
+# Build for Radxa Zero 3W
+nix build .#sdImage-radxa-zero3w
+
+# Build for Raspberry Pi Zero 2W
+nix build .#sdImage-rpi-zero2w
 ```
 
 ### Flash the SD card image to SD card
 
 ```bash
-# Flash to SD card (replace /dev/sdX with your device)
-sudo dd if=result/sd-image/nixognito-radxa-zero3w.img of=/dev/sdX bs=4M status=progress oflag=sync
+# Radxa Zero 3W
+sudo dd if=result/sd-image/nixognito-radxa-zero3w-*.img of=/dev/sdX bs=4M status=progress oflag=sync
+
+# Raspberry Pi Zero 2W
+sudo dd if=result/sd-image/nixognito-rpi-zero2w-*.img of=/dev/sdX bs=4M status=progress oflag=sync
 ```
 
 ## Configuration Files
 
-- `configuration.nix` - Main system configuration (users, packages, boot)
-- `hardware-configuration.nix` - Radxa Zero 3W hardware settings and kernel modules
-- `networking.nix` - NetworkManager, WiFi setup script, firewall basics
-- `tor-proxy.nix` - Tor service, transparent proxy, service dependencies (see design docs)
-- `usb-ssh.nix` - USB gadget ethernet for SSH access over USB
-- `security-hardening.nix` - Additional security hardening rules
-- `flake.nix` - Nix flake with build targets
+```
+├── configuration.nix           # Shared system configuration (users, packages, boot)
+├── devices/
+│   ├── radxa-zero3w/
+│   │   ├── default.nix         # Radxa Zero 3W hardware, SD image layout
+│   │   └── aic8800.nix         # AIC8800 WiFi driver and firmware
+│   └── rpi-zero2w/
+│       └── default.nix         # Raspberry Pi Zero 2W hardware, firmware, SD image
+├── networking.nix              # NetworkManager, WiFi setup script
+├── tor-proxy.nix               # Tor transparent proxy + service dependencies
+├── usb-ssh.nix                 # USB gadget ethernet (g_ether)
+├── security-hardening.nix      # Additional security rules
+├── flake.nix                   # Nix flake with multi-device build targets
+└── README.md                   # This file
+```
 
 ## First Boot Setup
 
-1. Insert SD card into Radxa Zero 3W board
-2. Connect USB-C cable between board's USB-C port and your computer
+1. Insert SD card into your board
+2. Connect USB-C cable (Radxa) or micro-USB cable (RPi) between board and your computer
 3. Power on the board (wait ~30 seconds for boot)
 
 ### macOS Setup
@@ -201,31 +223,34 @@ All other processes are forced through Tor's transparent proxy or rejected.
 ## Network Architecture
 
 ```
-┌─────────────┐    ┌──────────────┐    ┌─────────────┐
-│   Client    │────│ USB Ethernet │────│   Radxa     │
-│  Computer   │    │  (192.168.   │    │  Zero 3W    │
-│ 192.168.64.1│    │   64.0/24)   │    │ 192.168.64.2│
-└─────────────┘    └──────────────┘    └─────────────┘
-                                              │
-                                              │ WiFi (wlan0)
-                                              ▼
-┌─────────────┐    ┌──────────────┐    ┌─────────────┐
-│  Internet   │◄───│     Tor      │◄───│   Router    │
-│             │    │   Network    │    │             │
-└─────────────┘    └──────────────┘    └─────────────┘
+┌──────────────────┐      ┌───────────────────────┐      ┌─────────────────┐
+│ Client Computer  │──────│  USB Ethernet Gadget  │──────│ SBC (Radxa/RPi) │
+│   192.168.64.1   │      │    192.168.64.0/24    │      │  192.168.64.2   │
+└──────────────────┘      └───────────────────────┘      └─────────────────┘
+                                                                  │
+                                                                  │ WiFi (wlan0)
+                                                                  ▼
+┌──────────────────┐      ┌───────────────────────┐      ┌─────────────────┐
+│     Internet     │◄─────│      Tor Network      │◄─────│   WiFi Router   │
+└──────────────────┘      └───────────────────────┘      └─────────────────┘
 ```
 
 ## Build Targets
 
 ```bash
-# Build SD image for current architecture
-nix build .#sdImage
+# Build for Radxa Zero 3W
+nix build .#sdImage-radxa-zero3w
+
+# Build for Raspberry Pi Zero 2W
+nix build .#sdImage-rpi-zero2w
 
 # Cross-compile from x86_64 to aarch64
-nix build .#packages.x86_64-linux.sdImage
+nix build .#packages.x86_64-linux.sdImage-radxa-zero3w
+nix build .#packages.x86_64-linux.sdImage-rpi-zero2w
 
 # Test configuration without building image
-nix build .#nixosConfigurations.nixognito.config.system.build.toplevel
+nix build .#nixosConfigurations.nixognito-radxa-zero3w.config.system.build.toplevel
+nix build .#nixosConfigurations.nixognito-rpi-zero2w.config.system.build.toplevel
 
 # Enter development shell
 nix develop
@@ -255,10 +280,18 @@ systemd.services.network-lockdown.timer = {
 };
 ```
 
+### Adding a New Device
+
+To add support for another SBC:
+
+1. Create `devices/<device-name>.nix` following the structure of existing device modules
+2. Add the device name to the `devices` list in `flake.nix`
+3. Configure: device tree, kernel modules, WiFi driver/firmware, boot params, SD image layout
+
 ## Troubleshooting
 
 ### USB Ethernet Not Working
-- Check USB-C cable connection (must support data, not just charging)
+- Check USB cable connection (must support data, not just charging)
 - Verify interface appeared: `ifconfig` (macOS) or `ip link` (Linux)
 - Check board booted: wait 30+ seconds after power on
 - Try a different USB port
@@ -287,18 +320,6 @@ systemd.services.network-lockdown.timer = {
 
 ## Development
 
-### Project Structure
-```
-├── configuration.nix           # Main system configuration
-├── hardware-configuration.nix  # Radxa Zero 3W hardware support
-├── networking.nix              # NetworkManager, WiFi setup script
-├── tor-proxy.nix               # Tor transparent proxy + service dependencies
-├── usb-ssh.nix                 # USB gadget ethernet (g_ether)
-├── security-hardening.nix      # Additional security rules
-├── flake.nix                   # Nix flake configuration
-└── README.md                   # This file
-```
-
 ### Testing Changes
 
 ```bash
@@ -306,10 +327,10 @@ systemd.services.network-lockdown.timer = {
 nix flake check
 
 # Build configuration only
-nix build .#nixosConfigurations.nixognito.config.system.build.toplevel
+nix build .#nixosConfigurations.nixognito-radxa-zero3w.config.system.build.toplevel
 
 # Full image build
-nix build .#sdImage
+nix build .#sdImage-radxa-zero3w
 ```
 
 ### Contributing
